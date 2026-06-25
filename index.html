@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ken Transfer Report</title>
+  <title>Internal Transfers</title>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     :root {
@@ -164,7 +164,7 @@
 </head>
 <body>
   <header>
-    <h1>Transfer Report</h1>
+    <h1>Internal Transfers</h1>
     <p>HTML version of ken.py. Select the same Excel files, then build the report in your browser.</p>
   </header>
 
@@ -221,7 +221,11 @@
     }
 
     function cleanHeader(h) {
-      return String(h ?? "").replace(/_x000d_/g, " ").trim();
+      return String(h ?? "")
+        .replace(/_x000d_/gi, " ")
+        .replace(/[\r\n]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
     }
 
     function roundHalfUp(n) {
