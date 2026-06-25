@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ken Transfer Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --blue: #bdd7ee;
+      --green: #c6e0b4;
+      --grey: #d9d9d9;
+      --highlight: #fff2cc;
+      --border: #d0d7de;
+      --dark: #1f2937;
+      --muted: #6b7280;
+      --bg: #f6f8fa;
+      --card: #ffffff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--dark);
+      background: var(--bg);
+    }
+
+    header {
+      padding: 24px 28px;
+      background: #111827;
+      color: #fff;
+    }
+
+    header h1 {
+      margin: 0 0 6px;
+      font-size: 26px;
+    }
+
+    header p {
+      margin: 0;
+      color: #d1d5db;
+    }
+
+    main {
+      padding: 22px 28px 36px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 18px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 12px;
+      align-items: end;
+    }
+
+    label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    input[type="file"] {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 11px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      background: #2563eb;
+      color: #fff;
+    }
+
+    button.secondary {
+      background: #374151;
+    }
+
+    button:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+    }
+
+    .status {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(140px, 1fr));
+      gap: 12px;
+    }
+
+    .metric {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      background: #fff;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+
+    .metric strong {
+      font-size: 24px;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: 72vh;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 1500px;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    th.order { background: var(--blue); }
+    th.source { background: var(--green); }
+    th.suggested { background: var(--grey); }
+    tr.premium td { background: var(--highlight); }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Transfer Report</h1>
+    <p>HTML version of ken.py. Select the same Excel files, then build the report in your browser.</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="controls">
+        <div>
+          <label for="files">Select files</label>
+          <input id="files" type="file" multiple accept=".xlsx,.xls" />
+        </div>
+        <button id="buildBtn">Build Report</button>
+        <button id="downloadBtn" class="secondary" disabled>Download Excel</button>
+      </div>
+      <div id="status" class="status">Upload the live orders file, transfer groups file, and all shop report files.</div>
+    </section>
+
+    <section id="summaryCard" class="card hidden">
+      <div class="summary">
+        <div class="metric"><span>Report rows</span><strong id="rowsMetric">0</strong></div>
+        <div class="metric"><span>To stores</span><strong id="toStoresMetric">0</strong></div>
+        <div class="metric"><span>From stores</span><strong id="fromStoresMetric">0</strong></div>
+        <div class="metric"><span>Premium rows</span><strong id="premiumMetric">0</strong></div>
+      </div>
+    </section>
+
+    <section id="tableCard" class="card hidden">
+      <div class="table-wrap">
+        <table id="reportTable"></table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const headers = [
+      "To Store", "Product Group", "Supplier", "Product", "Description",
+      "Order Cases", "Order Units", "From Store", "Stock", "Sales", "OOS Days",
+      "Lost Sales", "Available Units", "Suggested Units", "Suggested Cases"
+    ];
+
+    let reportRows = [];
+
+    const $ = (id) => document.getElementById(id);
+
+    function normSku(x) {
+      const n = Number(x);
+      if (Number.isFinite(n)) return String(Math.trunc(n));
+      return String(x ?? "").replace(/\D/g, "");
+    }
+
+    function code2(x) {
+      const n = Number(x);
+      if (Number.isFinite(n)) return String(Math.trunc(n)).padStart(2, "0");
+      return String(x ?? "").padStart(2, "0");
+    }
+
+    function cleanHeader(h) {
+      return String(h ?? "").replace(/_x000d_/g, " ").trim();
+    }
+
+    function roundHalfUp(n) {
+      return Math.floor(Number(n || 0) + 0.5);
+    }
+
+    function toNumber(x, fallback = 0) {
+      const n = Number(x);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function readWorkbook(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target.result);
+            const wb = XLSX.read(data, { type: "array" });
+            const sheet = wb.Sheets[wb.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+            resolve({ file, rows });
+          } catch (err) {
+            reject(err);
+          }
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
+      });
+    }
+
+    function rowsToObjects(rows) {
+      if (!rows.length) return [];
+      const cols = rows[0].map(cleanHeader);
+      return rows.slice(1).map(row => {
+        const obj = {};
+        cols.forEach((col, i) => obj[col] = row[i]);
+        obj.__raw = row;
+        return obj;
+      });
+    }
+
+    function groupBy(items, keyFn, aggFn) {
+      const map = new Map();
+      for (const item of items) {
+        const key = keyFn(item);
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(item);
+      }
+      return Array.from(map.values()).map(aggFn);
+    }
+
+    async function buildReport() {
+      const files = Array.from($("files").files || []);
+      if (!files.length) {
+        $("status").textContent = "Please select the Excel files first.";
+        return;
+      }
+
+      $("status").textContent = "Reading files...";
+      const loaded = await Promise.all(files.map(readWorkbook));
+
+      const live = loaded.find(x => x.file.name.toLowerCase().includes("live") && x.file.name.toLowerCase().includes("order"));
+      const transferGroups = loaded.find(x => x.file.name.toLowerCase().includes("group"));
+      const shopFiles = loaded.filter(x => /^\d{2}/.test(x.file.name));
+
+      if (!live) throw new Error("Could not find the live orders file.");
+      if (!transferGroups) throw new Error("Could not find the transfer groups file.");
+      if (!shopFiles.length) throw new Error("Could not find shop report files starting with 2 digits.");
+
+      const groupMap = {};
+      const storeNameMap = {};
+      let currentGroup = null;
+
+      for (const row of transferGroups.rows) {
+        const val1 = String(row[0] ?? "").trim();
+        const val2 = row.length > 1 ? row[1] : null;
+
+        if (val1.toLowerCase().includes("group")) {
+          currentGroup = val1;
+          continue;
+        }
+        if (val1 === "" || val2 === null || val2 === "") continue;
+
+        const storeCode = code2(val2);
+        groupMap[storeCode] = currentGroup;
+        storeNameMap[storeCode] = val1;
+      }
+
+      const liveObjects = rowsToObjects(live.rows).map(obj => {
+        const raw = obj.__raw;
+        const storeCode = code2(raw[4]);
+        const cases = toNumber(raw[8]);
+        const conversion = toNumber(raw[15], 1);
+        return {
+          storeCode,
+          storeName: raw[5],
+          barcode: raw[6],
+          description: raw[7],
+          cases,
+          supplier: raw[11],
+          sku: normSku(raw[12]),
+          packSize: toNumber(raw[13], 1),
+          conversion,
+          units: cases * conversion,
+          group: groupMap[storeCode] || "UNKNOWN"
+        };
+      });
+
+      const shopRows = [];
+
+      for (const shopFile of shopFiles) {
+        const store = code2(shopFile.file.name.slice(0, 2));
+        const group = groupMap[store] || "UNKNOWN";
+        const objects = rowsToObjects(shopFile.rows);
+
+        for (const obj of objects) {
+          const stock = toNumber(obj["Unit Stock Volume"]);
+          const sales = toNumber(obj["Unit 2025 Volume"]);
+          const oos = toNumber(obj["Out Of Stock Days"]);
+          const pack = toNumber(obj["Pack Size"], 1);
+          const premium = toNumber(obj["Premium Stock"]);
+          const inStockDays = 90 - oos;
+          const lost = inStockDays > 0 ? (sales / inStockDays) * oos : 0;
+          const available = Math.max(stock - sales - lost, 0);
+
+          shopRows.push({
+            store,
+            group,
+            sku: normSku(obj["SKU"]),
+            packSize: pack,
+            productGroup: obj["Product Group"] || "",
+            stock,
+            sales,
+            oosDays: oos,
+            lostSales: lost,
+            available,
+            premium
+          });
+        }
+      }
+
+      const shop = groupBy(
+        shopRows,
+        r => [r.store, r.group, r.sku, r.packSize].join("||"),
+        rows => ({
+          store: rows[0].store,
+          group: rows[0].group,
+          sku: rows[0].sku,
+          packSize: rows[0].packSize,
+          productGroup: rows[0].productGroup,
+          stock: rows.reduce((a, r) => a + r.stock, 0),
+          sales: rows.reduce((a, r) => a + r.sales, 0),
+          oosDays: rows.reduce((a, r) => a + r.oosDays, 0),
+          lostSales: rows.reduce((a, r) => a + r.lostSales, 0),
+          available: rows.reduce((a, r) => a + r.available, 0),
+          premium: rows.reduce((a, r) => a + r.premium, 0)
+        })
+      );
+
+      reportRows = [];
+
+      for (const r of liveObjects) {
+        const matches = shop.filter(d =>
+          d.sku === r.sku &&
+          d.packSize === r.packSize &&
+          d.group === r.group &&
+          d.store !== r.storeCode
+        );
+
+        for (const d of matches) {
+          if (d.available <= 0) continue;
+          const caseUnits = r.conversion || 1;
+
+          reportRows.push({
+            "To Store": `${r.storeCode} ${r.storeName}`,
+            "Product Group": d.productGroup,
+            "Supplier": r.supplier,
+            "Product": r.barcode,
+            "Description": r.description,
+            "Order Cases": roundHalfUp(r.cases),
+            "Order Units": roundHalfUp(r.units),
+            "From Store": `${d.store} ${storeNameMap[d.store] || d.store}`,
+            "Stock": roundHalfUp(d.stock),
+            "Sales": roundHalfUp(d.sales),
+            "OOS Days": roundHalfUp(d.oosDays),
+            "Lost Sales": roundHalfUp(d.lostSales),
+            "Available Units": roundHalfUp(d.available),
+            "Suggested Units": roundHalfUp(d.available),
+            "Suggested Cases": Math.round((d.available / caseUnits) * 100) / 100,
+            "Premium Flag": d.premium
+          });
+        }
+      }
+
+      renderReport();
+    }
+
+    function renderReport() {
+      const table = $("reportTable");
+      table.innerHTML = "";
+
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      headers.forEach((h, i) => {
+        const th = document.createElement("th");
+        th.textContent = h;
+        th.className = i <= 6 ? "order" : i <= 12 ? "source" : "suggested";
+        headerRow.appendChild(th);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      reportRows.forEach(row => {
+        const tr = document.createElement("tr");
+        if (toNumber(row["Premium Flag"]) > 0) tr.className = "premium";
+        headers.forEach(h => {
+          const td = document.createElement("td");
+          td.textContent = row[h] ?? "";
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+
+      $("rowsMetric").textContent = reportRows.length.toLocaleString();
+      $("toStoresMetric").textContent = new Set(reportRows.map(r => r["To Store"])).size.toLocaleString();
+      $("fromStoresMetric").textContent = new Set(reportRows.map(r => r["From Store"])).size.toLocaleString();
+      $("premiumMetric").textContent = reportRows.filter(r => toNumber(r["Premium Flag"]) > 0).length.toLocaleString();
+      $("summaryCard").classList.remove("hidden");
+      $("tableCard").classList.remove("hidden");
+      $("downloadBtn").disabled = false;
+      $("status").textContent = "Report created.";
+    }
+
+    function downloadExcel() {
+      const exportRows = reportRows.map(row => {
+        const clean = {};
+        headers.forEach(h => clean[h] = row[h]);
+        return clean;
+      });
+      const ws = XLSX.utils.json_to_sheet(exportRows, { header: headers });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "FINAL_REPORT");
+      XLSX.writeFile(wb, "FINAL_REPORT.xlsx");
+    }
+
+    $("buildBtn").addEventListener("click", () => {
+      buildReport().catch(err => {
+        console.error(err);
+        $("status").textContent = "Error: " + err.message;
+      });
+    });
+
+    $("downloadBtn").addEventListener("click", downloadExcel);
+  </script>
+</body>
+</html>
